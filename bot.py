@@ -835,9 +835,13 @@ async def get_players_keyboard(chat_id: int, exclude_id: int, action: str,
 
 
 async def get_war_targets_keyboard(chat_id: int, attacker_id: int) -> InlineKeyboardMarkup:
-    """Клавиатура для выбора цели атаки - союзники НЕ отображаются"""
+    """Клавиатура для выбора цели атаки - союзники и владелец игры НЕ отображаются"""
     builder = InlineKeyboardBuilder()
     players = await load_all_players(chat_id)
+    
+    # Получаем информацию об игре
+    game = await load_game(chat_id)
+    creator_id = game["creator_id"] if game else None
     
     # Получаем союзников атакующего
     allies = alliance_system.get_allies(chat_id, attacker_id)
@@ -846,8 +850,10 @@ async def get_war_targets_keyboard(chat_id: int, attacker_id: int) -> InlineKeyb
     
     for player in sorted_players:
         if player.user_id != attacker_id:
-            # Проверяем, является ли игрок союзником - если да, пропускаем
+            # Проверяем, является ли игрок союзником или владельцем игры
             if player.user_id in allies:
+                continue
+            if creator_id and player.user_id == creator_id:
                 continue
             
             country = COUNTRIES.get(player.country)
@@ -878,15 +884,21 @@ async def get_war_targets_keyboard(chat_id: int, attacker_id: int) -> InlineKeyb
 
 
 async def get_joint_attack_keyboard(chat_id: int, attacker_id: int) -> InlineKeyboardMarkup:
-    """Клавиатура для выбора цели совместной атаки - союзники и сам атакующий исключаются"""
+    """Клавиатура для выбора цели совместной атаки - союзники, владелец игры и сам атакующий исключаются"""
     builder = InlineKeyboardBuilder()
     players = await load_all_players(chat_id)
+    
+    # Получаем информацию об игре
+    game = await load_game(chat_id)
+    creator_id = game["creator_id"] if game else None
     
     # Получаем союзников атакующего
     allies = alliance_system.get_allies(chat_id, attacker_id)
     
     for player in players.values():
         if player.user_id != attacker_id and player.user_id not in allies:
+            if creator_id and player.user_id == creator_id:
+                continue
             country = COUNTRIES.get(player.country)
             if country:
                 builder.row(
@@ -1727,7 +1739,8 @@ async def handle_help_command(message: Message):
         "• Можно создавать постоянные союзы\n"
         "• Союзники получают бонус в бою\n"
         "• Можно устраивать совместные атаки\n"
-        "⚠️ **Нельзя атаковать своих союзников!**\n\n"
+        "⚠️ **Нельзя атаковать своих союзников!**\n"
+        "👑 **Нельзя атаковать создателя игры!**\n\n"
         "**⚔️ СОВМЕСТНАЯ АТАКА:**\n"
         "• При выборе цели нажмите Совместная атака\n"
         "• Все союзники присоединятся к атаке\n"
@@ -1760,7 +1773,8 @@ async def handle_game(message: Message):
         await save_game(chat_id, message.from_user.id)
         await message.answer(
             "🎮 **ИГРА СОЗДАНА!** 🎮\n\n"
-            "🌍 Чтобы присоединиться, нажмите /join",
+            "🌍 Чтобы присоединиться, нажмите /join\n"
+            f"👑 Вы создатель игры. Другие игроки не могут атаковать вас!",
             parse_mode="Markdown"
         )
     else:
@@ -1958,7 +1972,8 @@ async def handle_war_command(message: Message):
         f"**Ваша сила:** ⚔️{player.army_level} | 👥{player.population:,}{allies_text}\n\n"
         f"⚠️ Победитель получит 50% денег и 20% населения!\n"
         f"🤝 Союзники помогут в бою!\n"
-        f"🚫 **Нельзя атаковать своих союзников!**",
+        f"🚫 **Нельзя атаковать своих союзников!**\n"
+        f"👑 **Нельзя атаковать создателя игры!**",
         reply_markup=await get_war_targets_keyboard(chat_id, user_id),
         parse_mode="Markdown"
     )
@@ -2767,6 +2782,12 @@ async def handle_joint_target(callback: CallbackQuery):
     if not target:
         await callback.answer("❌ Цель не найдена!")
         return
+    
+    # Проверяем, является ли цель владельцем игры
+    game_info = await load_game(chat_id)
+    if game_info and target_id == game_info["creator_id"]:
+        await callback.answer("❌ Нельзя атаковать создателя игры!")
+        return
 
     # Создаем совместную атаку
     attack_id = alliance_system.create_joint_attack(attacker_id, target_id, chat_id)
@@ -2847,7 +2868,8 @@ async def handle_start_war(callback: CallbackQuery):
         f"**Ваша сила:** ⚔️{player.army_level} | 👥{player.population:,}{allies_text}\n\n"
         f"⚠️ Победитель получит 50% денег и 20% населения!\n"
         f"🤝 Союзники помогут в бою!\n"
-        f"🚫 **Нельзя атаковать своих союзников!**",
+        f"🚫 **Нельзя атаковать своих союзников!**\n"
+        f"👑 **Нельзя атаковать создателя игры!**",
         reply_markup=await get_war_targets_keyboard(chat_id, user_id),
         parse_mode="Markdown"
     )
@@ -2897,6 +2919,12 @@ async def handle_war_target(callback: CallbackQuery):
     allies = alliance_system.get_allies(chat_id, attacker_id)
     if target_player_id in allies:
         await callback.answer("❌ Нельзя атаковать своего союзника! Сначала разорвите союз.")
+        return
+    
+    # Проверяем, является ли цель владельцем игры
+    game_info = await load_game(chat_id)
+    if game_info and target_player_id == game_info["creator_id"]:
+        await callback.answer("❌ Нельзя атаковать создателя игры!")
         return
 
     await start_war_preparation(attacker_id, target_player_id, chat_id, callback.message)
@@ -3859,7 +3887,8 @@ async def handle_game_info(message: Message):
         f"• Совместные атаки с союзниками\n"
         f"• Союзники получают 20% бонус к силе\n"
         f"• Помощники получают 10% добычи\n"
-        f"• 🚫 **Нельзя атаковать своих союзников!**\n\n"
+        f"• 🚫 **Нельзя атаковать своих союзников!**\n"
+        f"• 👑 **Нельзя атаковать создателя игры!**\n\n"
         f"**📊 СТАТИСТИКА:**\n"
         f"• 🎮 **Активных игр:** {games_count}\n"
         f"• 👥 **Всего игроков:** {total_players}\n\n"
@@ -3913,6 +3942,7 @@ async def main():
     print(f"🔔 Включена система предупреждений о войне")
     print(f"🤝 Включена система союзников и совместных атак")
     print(f"🚫 Запрещена атака на союзников")
+    print(f"👑 Запрещена атака на создателя игры")
 
     init_database()
 
