@@ -17,7 +17,7 @@ from aiogram.exceptions import TelegramBadRequest
 
 # Конфигурация
 TOKEN = os.getenv("BOT_TOKEN", "8614643355:AAGM2X4p-xTs6KNuEThKMo3hvYG2eFRkesQ")
-ADMIN_ID = int(os.getenv("ADMIN_ID", "7877170613"))
+ADMIN_ID = int(os.getenv("ADMIN_ID", "5321542097"))
 
 # Настройки базы данных
 DATABASE_FILE = os.getenv("DATABASE_FILE", "game_database.db")
